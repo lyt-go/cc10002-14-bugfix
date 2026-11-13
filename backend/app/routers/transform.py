@@ -14,6 +14,7 @@ service = TransformService()
 
 LIST_FIELDS = ["节点编号", "输入表名", "输出表名", "转换逻辑", "执行顺序", "依赖节点", "失败策略", "调度周期"]
 STATUSES = ["草稿", "编排评审中", "已启用", "已停用"]
+ACTIONS = ["提交编排评审", "启用编排", "停用编排"]
 
 
 @router.get("", response_model=PageResult[dict])
@@ -28,6 +29,13 @@ def list_entries(
         raise HTTPException(status_code=400, detail="每页最多 200 条，请缩小分页范围")
     items, total = service.list_entries(keyword=keyword, status=status, page=page, size=size)
     return PageResult(items=items, total=total, page=page, size=size)
+
+
+@router.get("/export")
+def export_entries() -> dict[str, Any]:
+    """导出转换编排清单：返回当前过滤条件下的全量数据。"""
+    items, total = service.list_entries(page=1, size=10000)
+    return {"module": "transform", "total": total, "items": items}
 
 
 @router.get("/{entry_id}", response_model=dict)
@@ -45,7 +53,18 @@ def create_entry(payload: EntryPayload) -> ActionResult:
     entry, missing = service.create_entry(payload.values)
     if missing:
         return ActionResult(ok=False, message=f"缺少必填字段：{'、'.join(missing)}")
+    if entry is None:
+        return ActionResult(ok=False, message="节点编号已存在，不能重复登记")
     return ActionResult(ok=True, message="转换节点已登记", entry=entry)
+
+
+@router.patch("/{entry_id}", response_model=ActionResult)
+def update_entry(entry_id: int, payload: EntryPayload) -> ActionResult:
+    """维护转换节点字段；状态/复核/快照字段由落库版本仲裁，调用方提交的临时值不生效。"""
+    entry, message = service.update_entry(entry_id, payload.values)
+    if entry is None:
+        return ActionResult(ok=False, message=message)
+    return ActionResult(ok=True, message=message, entry=entry)
 
 
 @router.post("/{entry_id}/actions", response_model=ActionResult)
@@ -56,10 +75,3 @@ def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
     if entry is None:
         return ActionResult(ok=False, message=message)
     return ActionResult(ok=True, message=message, entry=entry)
-
-
-@router.get("/export")
-def export_entries() -> dict[str, Any]:
-    """导出转换编排清单：返回当前过滤条件下的全量数据。"""
-    items, total = service.list_entries(page=1, size=10000)
-    return {"module": "transform", "total": total, "items": items}
